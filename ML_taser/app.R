@@ -18,7 +18,7 @@ library(dplyr)
 library(magrittr)
 library(data.table)
 library(MLeval)
-
+ 
 #Helpful functions ------
 `%notin%` <- Negate(`%in%`)
 `%notlike%` <- Negate(`%like%`)
@@ -28,46 +28,57 @@ back_2_front <- function(df){
 }
 
 # Define UI -----
-ui <- fluidPage(
-    
+ui <- fluidPage( theme = bslib::bs_theme(bootswatch = "united"),
+                 tabsetPanel(
     # Application title
-    titlePanel("Predicting 3 Month DAS44 Outcomes Using Baseline Metabolome"),
+    tabPanel("Import File", 
+             sidebarPanel(
+               column(width=12),
+                 # Importing file
+                 fileInput('data', 'Import file containing response-features matrix',accept = c(".csv", ".tsv")),
+                 # Return table
+                 numericInput('n', "Number of rows of file to show", value= 10, min=1, step=1),
+                 numericInput('fs', 'Number of features used', value= 10, min=1, step=1)),
+             mainPanel(
+               tableOutput("head_data"))),
     
-    sidebarPanel(
-        # Importing file
-        fileInput('train', 'Import training file',accept = c(".csv", ".tsv")),
-        fileInput('test', 'Import test file',accept = c(".csv", ".tsv")),
-        
-        # Return table
-        numericInput('n', 'Rows', value= 10, min=1, step=1),
-        
-        numericInput('fs', 'Features', value= 10, min=1, step=1)
-        
-    ),
-    
-    mainPanel(
-        h1("Training data"),
-        #tableOutput("head_train"),
-        #plotOutput("gg"),
-        #tableOutput("feats"),
-        #textOutput("resp_length"), 
-        #textOutput("samp_count"),
-        #tableOutput("DF_mod"),
-        h2("Feature Selection: RFE"),
-        plotOutput("gg_fs"),
-        h2("Model Selection: ROC Curves"),
-        plotOutput("model_selection"),
-        h2("Model Selection: Performance Metrics"),
-        tableOutput("model_sel_tbl"),
-        #tableOutput("resp_fs_tb")
-        #tableOutput("head_train_only"),
-        #tableOutput("resp_only")
-    )
-)
-
+    tabPanel("Exploratory Data Analysis",
+             h2("Histogram of DAS44 Outcomes"),
+             h2("PCA plot"),
+             h2("Volcano Plot"),
+             h2("Baseline Correlations with DAS44 Outcomes")
+             ),
+    tabPanel("Model Training",
+            
+                 #h1("Training data"),
+               verticalLayout(
+                 numericInput('mod_gen_repeats', "Number of K-fold cross validations used in resampling: Enter number (e.g. 5-10)", value= 10, min=1, step=1),
+                 numericInput('repeatedcv_number', "Number of folds in K-fold cross-validation (e.g. 50-100)", value= 10, min=1, step=1),
+                 
+                 h2("Feature Selection"),
+                 plotOutput("gg_fs"),
+                 h2("ROC Curves"),
+                 plotOutput("model_selection")
+               ),
+               h2("Performance Metrics"),
+               tableOutput("model_sel_tbl")),
+                
+    tabPanel("Model Testing",
+             sidebarPanel(
+                 selectInput('model_from_train', 'Select ML algorithm', 
+                             c('svmRadial', 'rf', 'xgbTree', 'knn', 'naive_bayes'))),
+             mainPanel(
+                 h1("Evaluation of Final Model"),
+                 #tableOutput("head_test"),
+                 verticalLayout(
+                   h2("ROC Curve"),
+                   plotOutput("model_perf_roc"),
+                   h2("Calibration Curve"),
+                   plotOutput("model_perf_cc"))))))
 
 # Define server ----- 
 server <- function(input, output, session) ({
+  thematic::thematic_shiny()
     load_file <- function(name, path) {
         ext <- tools::file_ext(name)
         switch(ext,
@@ -77,13 +88,30 @@ server <- function(input, output, session) ({
         )
     }
     
-    data_train <- reactive({
-        req(input$train)
-        load_file(input$train$name, input$train$datapath)
+    data_df <- reactive({
+      req(input$data)
+      load_file(input$data$name, input$data$datapath)
     })
     
-    output$head_train <- renderTable({
-        head(data_train(), input$n)
+    data_train <- reactive({
+      set.seed(42)
+      index <- createDataPartition(data_df()$Response, p = 0.7, list = FALSE)
+      train_data <- data_df()[index, ]
+    })
+    
+    data_test <- reactive({
+      set.seed(42)
+      index <- createDataPartition(data_df()$Response, p = 0.7, list = FALSE)
+      test_data <- data_df()[-index,]
+    })
+    
+    
+    output$head_data <- renderTable({ # not included in the output right now
+        head(data_df(), input$n)
+    })
+    
+    output$head_test <- renderTable({ # not included in the output right now
+      data_test()
     })
     
     output$gg <- renderPlot({
@@ -92,47 +120,13 @@ server <- function(input, output, session) ({
             theme_minimal()
     })
     
-    train_no_resp <- reactive({
-        as.data.frame(data_train()[,-c(1:5)])
-    })
-    
-    response <- reactive({
-        data_train()$Response
-    })
-    
-    
-    output$head_train_only <- renderTable({
-        train_no_resp()
-    })
-    
-    output$resp_only <- renderTable({
-        class(response())
-    })
-    
-    resp_count <- reactive({
-        length(response())
-    })
-    
-    sample_count <- reactive({
-        dim(train_no_resp())
-    })
-    
-    output$resp_length <- renderText({
-        resp_count()
-    })
-    
-    output$samp_count <- renderText({
-        sample_count()
-    })
-    
-    
     ft_sel <- reactive({
         options(warn=-1)
         lmProfile <- rfe(x=data_train()[,-c(1:5)], y=as.factor(data_train()$Response),
                          sizes = c(1:5, 10, 15, 20),
                          rfeControl = rfeControl(functions = rfFuncs,
                                                  method = "repeatedcv",
-                                                 #repeats = 50,
+                                                 repeats = 50,
                                                  verbose = FALSE))
         var_imp_RFE <- lmProfile$variables
         var_imp_RFE <- subset(var_imp_RFE, var_imp_RFE$Overall > 0)
@@ -150,7 +144,7 @@ server <- function(input, output, session) ({
     })
     
     output$gg_fs <- renderPlot({
-        ab <- head(ft_sel(), 10)
+        ab <- head(ft_sel(), input$fs)
         ggplot(ab, aes(x=Overall, y=reorder(var, Overall)))+
             geom_col(aes(fill=Overall))+
             theme_minimal()+
@@ -205,29 +199,28 @@ server <- function(input, output, session) ({
         
         # train the SVM model
         set.seed(42)
-        modelSvm <- train(resp_fs()$Response~., data=resp_fs(), method="svmRadial", trControl=control)
+        SVM <- train(resp_fs()$Response~., data=resp_fs(), method="svmRadial", trControl=control)
         # train the RF model
         set.seed(42)
-        model_rf <- train(resp_fs()$Response~., data=resp_fs(), method="rf", trControl=control)
+        RF <- train(resp_fs()$Response~., data=resp_fs(), method="rf", trControl=control)
         # train the XGBoost model
         set.seed(42)
-        model_xgb <- train(resp_fs()$Response~., data=resp_fs(), method="xgbTree", trControl=control)
+        XGBoost <- train(resp_fs()$Response~., data=resp_fs(), method="xgbTree", trControl=control)
         # train the KNN model
         set.seed(42)
-        model_knn <- train(resp_fs()$Response~., data=resp_fs(), method="knn", trControl=control)
+        KNN <- train(resp_fs()$Response~., data=resp_fs(), method="knn", trControl=control)
         # train the naive Bayes model
         set.seed(42)
-        model_naivebayes <- train(resp_fs()$Response~., data=resp_fs(), method="naive_bayes", trControl=control)
+        NB <- train(resp_fs()$Response~., data=resp_fs(), method="naive_bayes", trControl=control)
         
-        comp_roc <- evalm(list(modelSvm, model_rf, 
-                               model_xgb,  model_knn, 
-                               model_naivebayes),
-                          gnames=c('SVM', 'RF', 'XGB', 'KNN', 'NB'))
+        comp_roc <- evalm(list(SVM, RF, XGBoost,  KNN, NB),
+                          gnames=c('KNN', 'XGBoost', 'RF', 'SVM', 'NB'))
+        
         
     }) 
     
     output$model_selection <- renderPlot({ # plot ROC for all models from training data
-        model_sel()
+        model_sel()[[1]]
     })
     
     model_sel_tb <- reactive({
@@ -237,12 +230,43 @@ server <- function(input, output, session) ({
         ml_eval_output[c(1:3,8:13),]
     })
     
-    output$model_sel_tbl <- renderTable({ # plot ROC for all models from training data
+    output$model_sel_tbl <- renderTable({ 
         model_sel_tb()
     })
     
+    ## Model generation
+    model_gen <- reactive({
+      set.seed(42)
+      registerDoParallel(4)
+      getDoParWorkers()
+      modell <- train(Response~., data=resp_fs(),
+                      method=input$model_from_train, 
+                      metric='Accuracy',
+                      trControl= trainControl(method="repeatedcv", 
+                                              number=input$repeatedcv_number, 
+                                              repeats=input$mod_gen_repeats,
+                                              summaryFunction=twoClassSummary,
+                                              #summaryFunction = prSummary, # only needed with imbalanced classification
+                                              savePredictions = TRUE, 
+                                              classProbs = TRUE, 
+                                              verboseIter = TRUE))
+      })
     
+    model_eval <- reactive({
+      model_2_assess <- model_gen()
+      performance <- evalm(model_2_assess, gnames='Model')
+      performance
+    })
+    
+    output$model_perf_roc <- renderPlot({ 
+      model_eval()[1]
+    })
+    
+    output$model_perf_cc <- renderPlot({ 
+      model_eval()[4]
+    })
+    
+
 })
 
-# Run the application 
 shinyApp(ui = ui, server = server)
