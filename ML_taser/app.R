@@ -18,6 +18,13 @@ library(dplyr)
 library(magrittr)
 library(data.table)
 library(MLeval)
+library(limma)
+library(purrr)
+library(ggpubr)
+library (gtools)
+library(tidyverse) 
+library(ggrepel)
+library(tidyr)
  
 #Helpful functions ------
 `%notin%` <- Negate(`%in%`)
@@ -37,24 +44,28 @@ ui <- fluidPage( theme = bslib::bs_theme(bootswatch = "united"),
                  # Importing file
                  fileInput('data', 'Import file containing response-features matrix',accept = c(".csv", ".tsv")),
                  # Return table
-                 numericInput('n', "Number of rows of file to show", value= 10, min=1, step=1),
-                 numericInput('fs', 'Number of features used', value= 10, min=1, step=1)),
+                 numericInput('n', "Number of rows of file to show", value= 10, min=1, step=1)),
              mainPanel(
                tableOutput("head_data"))),
     
     tabPanel("Exploratory Data Analysis",
              h2("Histogram of DAS44 Outcomes"),
+             plotOutput("das44_hist"),
+             plotOutput("class_balance"),
              h2("PCA plot"),
-             h2("Volcano Plot"),
-             h2("Baseline Correlations with DAS44 Outcomes")
+             plotOutput("PCA"),
+             h2("Volcano Plot: Differential Abundance of Metabolites Across DAS44-Based Responses"),
+             plotOutput("limma"),
+             tableOutput("limma_tab"),
+             
              ),
     tabPanel("Model Training",
             
                  #h1("Training data"),
                verticalLayout(
                  numericInput('mod_gen_repeats', "Number of K-fold cross validations used in resampling: Enter number (e.g. 5-10)", value= 10, min=1, step=1),
-                 numericInput('repeatedcv_number', "Number of folds in K-fold cross-validation (e.g. 50-100)", value= 10, min=1, step=1),
-                 
+                 numericInput('repeatedcv_number', "Number of folds in K-fold cross-validation (e.g. 50-100)", value= 100, min=1, step=1),
+                 numericInput('fs', 'Number of features used', value= 10, min=1, step=1),
                  h2("Feature Selection"),
                  plotOutput("gg_fs"),
                  h2("ROC Curves"),
@@ -104,7 +115,48 @@ server <- function(input, output, session) ({
       index <- createDataPartition(data_df()$Response, p = 0.7, list = FALSE)
       test_data <- data_df()[-index,]
     })
+
+    output$das44_hist <- renderPlot({
+        ggplot(data_df())+
+            geom_histogram(aes(x=DAS44),
+                           colour= 'black', fill='orange')+
+            theme_minimal()+
+            labs(x='ΔDAS44',
+                 y='Frequency',
+                 title='Distribution of DAS44 Changes Across 3 Months in TaSER Trial')+
+            geom_vline(xintercept = -2.4, size=3, colour='red')
+    })
     
+    
+
+    PCA_data <- reactive({
+        comb_ft_PCA <- data_df()[,-c(1,3:5)]
+        comb_cut_t <- comb_ft_PCA[,-1]
+        scaled_intensities <- scale((comb_cut_t))
+        scaled_intensities[do.call(cbind, lapply(scaled_intensities, is.nan))] <- 0
+        scaled_intensities<- as.data.frame(scaled_intensities)
+        pca_data <- prcomp(scaled_intensities)
+        pca_data
+    })
+
+    output$PCA <- renderPlot({
+        pca_coord <- data.frame(PCA_data()$x)
+        var_explained <- PCA_data()$sdev^2/sum(PCA_data()$sdev^2)
+        var_explained[1:5]
+        pca_coord$Response <-as.factor(data_df()$Response)
+        ggplot(pca_coord) + 
+            geom_point(size=2, alpha=0.7, 
+                       aes(x=PC1,y=PC2, colour= Response, fill= Response))+
+            labs(x=paste0("PC1: ",round(var_explained[1]*100,1),"%"),
+                 y=paste0("PC2: ",round(var_explained[2]*100,1),"%"))+
+            geom_hline(yintercept = 0,
+                       colour='navy',
+                       linetype='dashed')+
+            geom_vline(xintercept = 0,
+                       colour='navy',
+                       linetype='dashed')+
+            theme_minimal()
+    })
     
     output$head_data <- renderTable({ # not included in the output right now
         head(data_df(), input$n)
@@ -114,12 +166,74 @@ server <- function(input, output, session) ({
       data_test()
     })
     
-    output$gg <- renderPlot({
+    output$class_balance <- renderPlot({
         ggplot(data_train())+
-            geom_bar(aes(x=Response), fill= c('blue', 'red'))+
+            geom_bar(aes(x=Response), fill= c('orange', 'red'))+
             theme_minimal()
     })
     
+    
+    # Differential abundance
+    volcano_df <- reactive({
+        volc <- data_df()[,-c(1:5)]
+        volc$Response <- as.factor(data_df()$Response)
+        volc <- back_2_front(volc)
+        rownames(volc) <- paste0(volc$Response, '_', rownames(volc))
+        volc
+    })
+    
+    limma_fun <- reactive({
+        df1 <- volcano_df()
+        df1 <- df1[,-1]
+        df1 <- as.data.frame(t(df1))
+        colnames(df1) <- volcano_df()$Response
+        df1
+        
+        Group <- factor(colnames(df1), levels = c('Good', 'Poor'))
+        design <- model.matrix (~Group)
+        colnames(design) <- c('Good', 'GoodvsPoor')
+        eset <- df1
+        fit <- lmFit(eset, design)
+        fit <- eBayes(fit)
+        toptable <- topTable(fit, coef = 'GoodvsPoor', adjust = 'BH', number = 220)
+        toptable <- as.data.frame(toptable)
+        toptable$Putative_Metabolite <- rownames(toptable)
+        toptable <- toptable[,c(ncol(toptable),1:(ncol(toptable)-1))]
+        toptable$Sig <- 0
+        toptable$Sig <- ifelse(toptable$adj.P.Val <0.05, '< 0.05', '> 0.05') 
+        toptable$Sig_Names <-0
+        toptable$Sig_Names <- ifelse(toptable$Sig =='< 0.05' ,toptable$Putative_Metabolite, '')
+        toptable
+    
+    })
+    
+    output$limma_tab <- renderTable({
+      head(limma_fun(), n=10)
+    })
+    
+    output$limma <- renderPlot({
+      ggplot(limma_fun(), aes(x=logFC, y=-log10(P.Value), 
+                           colour=Sig, 
+                           group=Sig)) +
+        geom_point (alpha=0.7) +
+        theme_minimal() +
+        labs (x='LogFC',
+              y='-Log p-value',
+              colour='Adjusted \np-value')+
+        geom_text_repel(aes(x = logFC, y = -log10(P.Value), label = Sig_Names),
+                        box.padding =1,
+                        size=2.5,
+                        max.overlaps = Inf,
+                        position = position_jitter(seed = 1),
+                        arrow = arrow(length = unit(0.0015, "npc"))) +  
+        theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+              axis.title = element_text(size = rel(1.25)))+
+        scale_color_brewer(palette = "Set1",direction=-1)        })
+    
+   
+    
+    
+    #Machine learning
     ft_sel <- reactive({
         options(warn=-1)
         lmProfile <- rfe(x=data_train()[,-c(1:5)], y=as.factor(data_train()$Response),
