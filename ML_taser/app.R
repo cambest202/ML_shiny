@@ -49,7 +49,6 @@ library(randomForest)
 library(RColorBrewer)
 library(plotly)
 library(purrr)
-library(devtools)
 library(e1071)
 library(ggraph)
 library(igraph)
@@ -80,11 +79,16 @@ met_file <- read.csv('20210507_AB_metabolites_baseline_matrix.csv')
 
 # deploy app to github using: rsconnect::deployApp('ML_taser/')
 #options(repos = BiocManager::repositories()) 
+thematic::thematic_shiny(font = "auto")
 
 # Define UI -----
-ui <- fluidPage( theme = bslib::bs_theme(bootswatch = "united"),
+ui <- fluidPage( navbarPage(theme = bslib::bs_theme(bootswatch = "sandstone"),
+                            
+                            HTML('<a style="text-decoration:none;cursor:default;color:#FFFFFF;" class="active" href="#">Metabolic signature of MTX-responses in RA patients</a>'), id="nav",
+                            windowTitle = "Metabolic signature of MTX-responses in RA patients"),
+                 #h1("Metabolic signature of MTX-responses in RA patients"),
+                 #tags$style(HTML("h1{color: navy;}")),
                  tabsetPanel(
-                   # Application title
                    tabPanel("Import File", 
                             sidebarPanel(
                               column(width=12),
@@ -94,13 +98,17 @@ ui <- fluidPage( theme = bslib::bs_theme(bootswatch = "united"),
                               
                               #fileInput('data', 'Import file containing response-features matrix',accept = c(".csv", ".tsv")),
                               # Return table
-                              numericInput('n', "Number of rows of file to show", value= 10, min=1, step=1)),
-                            mainPanel(
-                              tableOutput("head_data"))),
+                              numericInput('n', "Number of rows of file to show", value= 10, min=1, step=1))),
                    
                    tabPanel("Exploratory Data Analysis",
-                            h2("Histogram of DAS44 Outcomes"),
+                            h2("Histogram of DAS44 Outcomes*"),
+                            h5('*vertical line denotes the EULAR-recommended cut-off for good/poor responses'),
+                            h5("Patient responses based on change in DAS44 (ΔDAS44) and final DAS44 score after 3 months"),
+                            h3('ΔDAS44'),
                             plotOutput("das44_hist"),
+                            h3('DAS44 after 3 months'), 
+                            plotOutput("das44_hist_end"),
+                            h2("Class Balance: DAS44-Based Response Categories"),
                             plotOutput("class_balance"),
                             h2("PCA plot"),
                             plotOutput("PCA"),
@@ -118,6 +126,7 @@ ui <- fluidPage( theme = bslib::bs_theme(bootswatch = "united"),
                               # numericInput('mod_gen_repeats', "Number of K-fold cross validations used in resampling: Enter number (e.g. 5-10)", value= 10, min=1, step=1),
                               # numericInput('repeatedcv_number', "Number of folds in K-fold cross-validation (e.g. 50-100)", value= 100, min=1, step=1),
                               # numericInput('fs', 'Number of features used', value= 10, min=1, step=1),
+                              h3('Please be patient, model training can take time'),
                               h2("Feature Selection"),
                               plotOutput("gg_fs"),
                               h2("ROC Curves"),
@@ -137,7 +146,12 @@ ui <- fluidPage( theme = bslib::bs_theme(bootswatch = "united"),
                                 h2("ROC Curve"),
                                 plotOutput("model_perf_roc"),
                                 h2("Calibration Curve"),
-                                plotOutput("model_perf_cc"))))))
+                                plotOutput("model_perf_cc")))),
+                   tabPanel("Data",
+                            h2("TaSER Metabolomic Data"),
+                            h3('(Annotated metabolites included only)'),
+                            mainPanel(
+                              tableOutput("head_data")))))
 
 # Define server ----- 
 server <- function(input, output, session) ({
@@ -171,12 +185,23 @@ server <- function(input, output, session) ({
   output$das44_hist <- renderPlot({
     ggplot(data_df())+
       geom_histogram(aes(x=DAS44),
-                     colour= 'black', fill='orange')+
+                     colour= 'black', fill='#56B4E9')+
       theme_minimal()+
       labs(x='ΔDAS44',
            y='Frequency',
            title='Distribution of DAS44 Changes Across 3 Months in TaSER Trial')+
-      geom_vline(xintercept = -2.4, size=3, colour='red')
+      geom_vline(xintercept = -1.2, size=3, colour='red')
+  })
+  
+  output$das44_hist_end <- renderPlot({
+    ggplot(data_df())+
+      geom_histogram(aes(x=End_DAS44),
+                     colour= 'black', fill='#56B4E9')+
+      theme_minimal()+
+      labs(x='3-Months: DAS44',
+           y='Frequency',
+           title='Distribution of DAS44 Changes Across 3 Months in TaSER Trial')+
+      geom_vline(xintercept = 2.4, size=3, colour='red')
   })
   
   
@@ -220,7 +245,7 @@ server <- function(input, output, session) ({
   
   output$class_balance <- renderPlot({
     ggplot(data_train())+
-      geom_bar(aes(x=Response), fill= c('orange', 'red'))+
+      geom_bar(aes(x=Response), fill= c('#E69F00', '#56B4E9'))+
       theme_minimal()
   })
   
@@ -287,6 +312,7 @@ server <- function(input, output, session) ({
   
   #Machine learning
   ft_sel <- reactive({
+
     options(warn=-1)
     lmProfile <- rfe(x=data_train()[,-c(1:5)], y=as.factor(data_train()$Response),
                      sizes = c(1:5, 10, 15, 20),
@@ -303,10 +329,6 @@ server <- function(input, output, session) ({
     var_imp_RFE <- subset(var_imp_RFE, var_imp_RFE$var != 'linolenic acid')
     var_imp_RFE <- subset(var_imp_RFE, var_imp_RFE$var != 'AMP-ubiquitin')
     
-  })
-  
-  output$feats <- renderTable({
-    head(ft_sel(), input$fs)
   })
   
   output$gg_fs <- renderPlot({
@@ -341,10 +363,7 @@ server <- function(input, output, session) ({
     df
   })
   
-  output$DF_mod <- renderTable({
-    head(model_df(),5)
-  })
-  
+
   resp_fs <- reactive({
     ab <- cbind.data.frame(data_train()$Response, model_df())
     names(ab)[1] <- 'Response'
@@ -356,6 +375,7 @@ server <- function(input, output, session) ({
   })
   
   model_sel <- reactive({
+
     control= trainControl(method="repeatedcv", 
                           number=10, 
                           summaryFunction = twoClassSummary,
@@ -396,19 +416,16 @@ server <- function(input, output, session) ({
     ml_eval_output[c(1:3,8:13),]
   })
   
-  output$model_sel_tbl <- renderTable({ 
-    model_sel_tb()
-  })
-  
   ## Model generation
   model_gen <- reactive({
+
     set.seed(42)
     modell <- train(Response~., data=resp_fs(),
                     method=input$model_from_train, 
                     metric='Accuracy',
                     trControl= trainControl(method="repeatedcv", 
                                             number=10, 
-                                            repeats=50,
+                                            repeats=10,
                                             summaryFunction=twoClassSummary,
                                             savePredictions = TRUE, 
                                             classProbs = TRUE, 
@@ -429,7 +446,18 @@ server <- function(input, output, session) ({
     model_eval()$cc
   })
   
+  model_sel_tb <- reactive({
+    ml_eval_output <- as.data.frame(model_sel()$stdres)
+    ml_eval_output$Measure <- rownames(ml_eval_output)
+    ml_eval_output <- back_2_front(ml_eval_output)
+    ml_eval_output[c(1:3,8:13),]
+  })
+  
+  output$model_sel_tbl <- renderTable({ 
+    model_sel_tb()
+  })
   
 })
 
 shinyApp(ui = ui, server = server)
+
