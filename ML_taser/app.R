@@ -76,13 +76,14 @@ back_2_front <- function(df){
 
 # example file
 met_file <- read.csv('20210507_AB_metabolites_baseline_matrix.csv')
+comp_file <- read.csv('20210507_AB_composite_baseline_matrix.csv')
 
 # deploy app to github using: rsconnect::deployApp('ML_taser/')
 #options(repos = BiocManager::repositories()) 
 thematic::thematic_shiny(font = "auto")
 
 # Define UI -----
-ui <- fluidPage( navbarPage(theme = bslib::bs_theme(bootswatch = "sandstone"),
+ui <- fluidPage( navbarPage(theme = bslib::bs_theme(bootswatch = "sandstone"),#sandstone, cerulean
                             
                             HTML('<a style="text-decoration:none;cursor:default;color:#FFFFFF;" class="active" href="#">Metabolic signature of MTX-responses in RA patients</a>'), id="nav",
                             windowTitle = "Metabolic signature of MTX-responses in RA patients"),
@@ -93,31 +94,35 @@ ui <- fluidPage( navbarPage(theme = bslib::bs_theme(bootswatch = "sandstone"),
                             sidebarPanel(
                               column(width=12),
                               # Importing file
-                              
-                              radioButtons('file', 'Select File', 'Baseline TaSER Metabolome File'),
-                              
-                              #fileInput('data', 'Import file containing response-features matrix',accept = c(".csv", ".tsv")),
-                              # Return table
-                              numericInput('n', "Number of rows of file to show", value= 10, min=1, step=1))),
+                              tags$hr(),
+                              h2('First Model Data'),
+                              radioButtons('file_met', 'Select File', 'Baseline TaSER Metabolome File (Metabolites-Only)'),
+                              tags$hr(),
+                              h2('Second Model Data'),
+                              radioButtons('file_comp', 'Select File', 'Baseline TaSER Metabolome File (Metabolites + Clinical Metadata'))),
                    
                    tabPanel("Exploratory Data Analysis",
                             h2("Histogram of DAS44 Outcomes*"),
                             h5('*vertical line denotes the EULAR-recommended cut-off for good/poor responses'),
+                            tags$hr(),
                             h5("Patient responses based on change in DAS44 (ΔDAS44) and final DAS44 score after 3 months"),
                             h3('ΔDAS44'),
                             plotOutput("das44_hist"),
                             h3('DAS44 after 3 months'), 
                             plotOutput("das44_hist_end"),
+                            tags$hr(),
                             h2("Class Balance: DAS44-Based Response Categories"),
                             plotOutput("class_balance"),
+                            tags$hr(),
                             h2("PCA plot"),
                             plotOutput("PCA"),
+                            tags$hr(),
                             h2("Volcano Plot: Differential Abundance of Metabolites Across DAS44-Based Responses"),
                             plotOutput("limma"),
                             tableOutput("limma_tab"),
                             
                    ),
-                   tabPanel("Model Training",
+                   tabPanel("Metabolites-Only Model Training",
                             
                             #h1("Training data"),
                             verticalLayout(
@@ -126,32 +131,107 @@ ui <- fluidPage( navbarPage(theme = bslib::bs_theme(bootswatch = "sandstone"),
                               # numericInput('mod_gen_repeats', "Number of K-fold cross validations used in resampling: Enter number (e.g. 5-10)", value= 10, min=1, step=1),
                               # numericInput('repeatedcv_number', "Number of folds in K-fold cross-validation (e.g. 50-100)", value= 100, min=1, step=1),
                               # numericInput('fs', 'Number of features used', value= 10, min=1, step=1),
-                              h3('Please be patient, model training can take time'),
+                              h3('Please be patient, model training can take time...'),
+                              tags$hr(),
                               h2("Feature Selection"),
-                              plotOutput("gg_fs"),
+                              img(src='20210516_met_FS.png'),
+                              #plotOutput("gg_fs"),
+                              tags$hr(),
                               h2("ROC Curves"),
-                              plotOutput("model_selection")
+                              img(src='20210516_met_mod_selection.png')
+                              #plotOutput("model_selection")
                             ),
+                            tags$hr(),
                             h2("Performance Metrics"),
-                            tableOutput("model_sel_tbl")),
+                            img(src='20210516_met_table_perf.png')),
+                            
+                            #tableOutput("model_sel_tbl")),
                    
-                   tabPanel("Model Testing",
+                   tabPanel("Metabolites-Only Model Testing",
                             sidebarPanel(
-                              selectInput('model_from_train', 'Select ML algorithm', 
-                                          c('svmRadial', 'rf', 'xgbTree', 'knn', 'naive_bayes'))),
+                              radioButtons('model', 'Select ML Algorithm', 'Naive Bayes')),
+                              
+                              #selectInput('model_from_train', 'Select ML algorithm', c('svmRadial', 'rf', 'xgbTree', 'knn', 'naive_bayes'))),
                             mainPanel(
-                              h1("Evaluation of Final Model"),
+                              h1("Evaluation of Final Metabolites-Only Model"),
+                              tags$hr(),
                               #tableOutput("head_test"),
                               verticalLayout(
                                 h2("ROC Curve"),
-                                plotOutput("model_perf_roc"),
+                                img(src='20210516_met_roc.png'),
+                                tags$hr(),
+                                #plotOutput("model_perf_roc"),
                                 h2("Calibration Curve"),
-                                plotOutput("model_perf_cc")))),
+                                img(src='20210516_met_cc.png'),
+                                tags$hr(),
+                                h2('Final model metrics'),
+                                img(src='20210516_met_fin_perf.png')))),
+                   
+                   tabPanel("Composite Model Training",
+                            
+                            #h1("Training data"),
+                            verticalLayout(
+                              radioButtons('mod_gen_repeats', "Number of K-fold cross validations used in resampling: Enter number (e.g. 5-10)", 10),
+                              radioButtons('repeatedcv_number', "Number of folds in K-fold cross-validation (e.g. 50-100)", 50),
+                              # numericInput('mod_gen_repeats', "Number of K-fold cross validations used in resampling: Enter number (e.g. 5-10)", value= 10, min=1, step=1),
+                              # numericInput('repeatedcv_number', "Number of folds in K-fold cross-validation (e.g. 50-100)", value= 100, min=1, step=1),
+                              # numericInput('fs', 'Number of features used', value= 10, min=1, step=1),
+                              h3('Please be patient, model training can take time...'),
+                              tags$hr(),
+                              h2("Feature Selection"),
+                              img(src='20210516_comp_fs.png'),
+                              tags$hr(),
+                              #plotOutput("gg_fs"),
+                              h2("ROC Curves"),
+                              img(src='20210516_comp_mod_selection.png')
+                              #plotOutput("model_selection")
+                            ),
+                            tags$hr(),
+                            h2("Performance Metrics"),
+                            img(src='20210516_comp_tab_perf.png')),
+                   
+                   tabPanel("Composite Model Testing",
+                            sidebarPanel(
+                              radioButtons('model', 'Select ML Algorithm', 'Naive Bayes')),
+                            
+                            #selectInput('model_from_train', 'Select ML algorithm', c('svmRadial', 'rf', 'xgbTree', 'knn', 'naive_bayes'))),
+                            mainPanel(
+                              h1("Evaluation of Final Composite Model"),
+                              #tableOutput("head_test"),
+                              verticalLayout(
+                                tags$hr(),
+                                h2("ROC Curve"),
+                                img(src='20210516_comp_roc.png'),
+                                tags$hr(),
+                                #plotOutput("model_perf_roc"),
+                                h2("Calibration Curve"),
+                                img(src='20210516_comp_cc.png'),
+                                tags$hr(),
+                                h2('Final model metrics'),
+                                img(src='20210516_comp_fin_perf.png')))),
+                   
+                   tabPanel("Comparison of Models",
+                            
+                            mainPanel(
+                              h1("Comparing Predictive Performance of the Models"),
+                              #tableOutput("head_test"),
+                              verticalLayout(
+                                tags$hr(),
+                                h2("ROC Curves"),
+                                img(src='20210516_comp_met_comparison.png'),
+                                h2("Are the ROC curves statistically different?"),
+                                img(src="20210516_comparison_delongs.png"),
+                                tags$hr()))),
+                   
                    tabPanel("Data",
                             h2("TaSER Metabolomic Data"),
                             h3('(Annotated metabolites included only)'),
                             mainPanel(
-                              tableOutput("head_data")))))
+                              h2("Metabolites-Only"),
+                              tableOutput("head_data"),
+                              tags$hr(),
+                              h2("Composite"),
+                              tableOutput("head_data_comp")))))
 
 # Define server ----- 
 server <- function(input, output, session) ({
@@ -169,6 +249,14 @@ server <- function(input, output, session) ({
   data_df <- reactive({
     met_file
     })
+  
+  data_composite <- reactive({
+    comp_file
+  })
+  
+  output$head_data_comp <- renderTable({ # not included in the output right now
+    head(data_composite(), 10)
+  })
   
   data_train <- reactive({
     set.seed(42)
@@ -236,8 +324,11 @@ server <- function(input, output, session) ({
   })
   
   output$head_data <- renderTable({ # not included in the output right now
-    head(data_df(), input$n)
+    head(data_df(), 10)
   })
+  
+ 
+  
   
   output$head_test <- renderTable({ # not included in the output right now
     data_test()
