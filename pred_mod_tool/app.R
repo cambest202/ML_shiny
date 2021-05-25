@@ -467,14 +467,14 @@ server <- function(input, output, session) ({
         
         ale_rf <- model_profile(explainer = explainer, 
                                 type='accumulated',
-                                variables = names(data_trainer)[-11])
+                                variables = names(data_trainer)[-(input$fs +1)])
         plot(ale_rf)
         })
     
     output$feat_imp_res <- renderPlot({
         data_trainer <- model_df()
         explainer <- DALEX::explain(model = model_gen(),  
-                                    data = data_trainer[, -11],
+                                    data = data_trainer[, -(input$fs +1)],
                                     y = data_trainer$Class, 
                                     type='classification',
                                     label='RF Model')
@@ -487,7 +487,7 @@ server <- function(input, output, session) ({
     output$breakdown_profile <- renderPlot({
         data_trainer <- model_df()
         explainer <- DALEX::explain(model = model_gen(),  
-                                    data = data_trainer[, -11],
+                                    data = data_trainer[, -(input$fs +1)],
                                     y = data_trainer$Class, 
                                     type='classification',
                                     label='RF Model')
