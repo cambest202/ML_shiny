@@ -45,6 +45,8 @@ library(kernlab)
 library(xgboost)
 library(mlbench)
 library(naivebayes)
+library(DALEX)
+library(ingredients)
 
 #Helpful functions ------
 `%notin%` <- Negate(`%in%`)
@@ -69,29 +71,29 @@ ui <- fluidPage( navbarPage(theme = bslib::bs_theme(bootswatch = "sandstone"),
                  tabsetPanel(
                      tabPanel("Import File", 
                               mainPanel(
-                              column(width=12),
-                              # Importing file
-                              tags$hr(),
-                              h2("Expected file layout*"),
-                              h5('*additional measures can be included after Class column and before first Feature columns'),
-                              h5('If additional measures included, make sure to note these below'),
-                              tableOutput("demo_file"),
-                              tags$hr(),
-                              fileInput('data', 'Import file containing binary class + features',accept = c(".csv", ".tsv")),
-                              tags$hr(),
-                              numericInput('n', "Number of rows of file to show", value= 10, min=1, step=1),
-                              tags$hr(),
-                              selectInput('non_fts', 'Select if file includes additional non-feature, non-Class metrics e.g. Class-associated measures', 
-                                          c('Yes', 'No')),
-                              tags$hr(),
-                              numericInput('col_ft', "Number of additional columns of non-feature data e.g. DAS44 measures", 
-                                           value= 5, min=1, step=1),
-                              tags$hr(),
-                              textInput('class_one', 'Enter name of class one e.g. Good or Poor'),
-                              tags$hr(),
-                              textInput('class_two', 'Enter name of class two e.g. Good or Poor'),
-                              # Horizontal line ----
-                              tags$hr())),
+                                  column(width=12),
+                                  # Importing file
+                                  tags$hr(),
+                                  h2("Expected file layout*"),
+                                  h5('*additional measures can be included after Class column and before first Feature columns'),
+                                  h5('If additional measures included, make sure to note these below'),
+                                  tableOutput("demo_file"),
+                                  tags$hr(),
+                                  fileInput('data', 'Import file containing binary class + features',accept = c(".csv", ".tsv")),
+                                  tags$hr(),
+                                  numericInput('n', "Number of rows of file to show", value= 10, min=1, step=1),
+                                  tags$hr(),
+                                  selectInput('non_fts', 'Select if file includes additional non-feature, non-Class metrics e.g. Class-associated measures', 
+                                              c('Yes', 'No')),
+                                  tags$hr(),
+                                  numericInput('col_ft', "Number of additional columns of non-feature data e.g. DAS44 measures", 
+                                               value= 5, min=1, step=1),
+                                  tags$hr(),
+                                  textInput('class_one', 'Enter name of class one e.g. Good or Poor'),
+                                  tags$hr(),
+                                  textInput('class_two', 'Enter name of class two e.g. Good or Poor'),
+                                  # Horizontal line ----
+                                  tags$hr())),
                      
                      tabPanel("Data",
                               h2("Imported File Layout"),
@@ -117,12 +119,13 @@ ui <- fluidPage( navbarPage(theme = bslib::bs_theme(bootswatch = "sandstone"),
                               tags$hr(),
                               tableOutput("limma_tab")),
                      
+                     
                      tabPanel("Model Training",
                               
                               #h1("Training data"),
                               verticalLayout(
                                   numericInput('mod_gen_repeats', "Number of K-fold cross validations used in resampling: Enter number (e.g. 5-10)", value= 10, min=1, step=1),
-                                  radioButtons("repeats", "Number of folds in K-fold cross validation", 10),
+                                  numericInput("repeats", "Number of folds in K-fold cross validation", value= 10, min=1, step=1),
                                   numericInput('fs', 'Number of features used', value= 10, min=1, step=1),
                                   h3('Please be patient, model training can take time'),
                                   # Horizontal line ----
@@ -154,7 +157,19 @@ ui <- fluidPage( navbarPage(theme = bslib::bs_theme(bootswatch = "sandstone"),
                                       # Horizontal line ----
                                       tags$hr(),
                                       h2("Calibration Curve"),
-                                      plotOutput("model_perf_cc"))))))
+                                      plotOutput("model_perf_cc")))),
+                     
+                     tabPanel("Interpreting the Model",
+                              tags$hr(),
+                              h2("Plotting partial dependence, accumulated local effects and local dependence"),
+                              plotOutput("ale_plot"),
+                              tags$hr(),
+                              h3('Feature Importance'),
+                              plotOutput("feat_imp_res"),
+                              tags$hr(),
+                              h3('Break Down Profile'),
+                              plotOutput("breakdown_profile")
+                     )))
 
 
 # Define server ----- 
@@ -238,7 +253,7 @@ server <- function(input, output, session) ({
     output$head_data <- renderTable({ 
         head(data_df_2(), input$n)
     })
-
+    
     output$class_balance <- renderPlot({
         ggplot(data_train())+
             geom_bar(aes(x=Class), fill= c('#E69F00', '#56B4E9'))+
@@ -355,47 +370,38 @@ server <- function(input, output, session) ({
         df <- df[,-1]
         df <- as.data.frame(t(df))
         colnames(df) <- gsub("(.*)_.*","\\1",colnames(df)) 
+        df$Class <- data_train()$Class
         df
     })
     
-    
-    resp_fs <- reactive({
-        ab <- cbind.data.frame(data_train()$Class, model_df())
-        names(ab)[1] <- 'Class'
-        ab
-    })
-    
-    output$resp_fs_tb <- renderTable({
-        resp_fs()
-    })
-    
+
     model_sel <- reactive({
         
         control= trainControl(method="repeatedcv", 
                               number=input$mod_gen_repeats, 
-                              repeats=10,
+                              repeats=input$repeats,
                               summaryFunction = twoClassSummary,
                               savePredictions = TRUE, 
                               classProbs = TRUE, 
                               verboseIter = TRUE)
         # train the SVM model
         set.seed(42)
-        SVM <- train(resp_fs()$Class~., data=resp_fs(), method="svmRadial", trControl=control)
+        SVM <- train(model_df()$Class~., data=model_df(), method="svmRadial", trControl=control)
         # train the RF model
         set.seed(42)
-        RF <- train(resp_fs()$Class~., data=resp_fs(), method="rf", trControl=control)
+        RF <- train(model_df()$Class~., data=model_df(), method="rf", trControl=control)
         # train the XGBoost model
         set.seed(42)
-        XGBoost <- train(resp_fs()$Class~., data=resp_fs(), method="xgbTree", trControl=control)
+        XGBoost <- train(model_df()$Class~., data=model_df(), method="xgbTree", trControl=control)
         # train the KNN model
         set.seed(42)
-        KNN <- train(resp_fs()$Class~., data=resp_fs(), method="knn", trControl=control)
+        KNN <- train(model_df()$Class~., data=model_df(), method="knn", trControl=control)
         # train the naive Bayes model
         set.seed(42)
-        NB <- train(resp_fs()$Class~., data=resp_fs(), method="naive_bayes", trControl=control)
-    
+        NB <- train(model_df()$Class~., data=model_df(), method="naive_bayes", trControl=control)
+        
         evalm(list(SVM, RF, XGBoost,  KNN, NB),
-              gnames=c('SVM', 'RF', 'XGBoost', 'KNN', 'NB'),optimise='INF')
+              gnames=c('SVM', 'RF', 'XGBoost', 'KNN', 'NB'))
     }) 
     
     output$model_selection <- renderPlot({ # plot ROC for all models from training data
@@ -413,7 +419,7 @@ server <- function(input, output, session) ({
     model_gen <- reactive({
         
         set.seed(42)
-        modell <- train(Class~., data=resp_fs(),
+        modell <- train(Class~., data=model_df(),
                         method=input$model_from_train, 
                         metric='ROC',
                         trControl= trainControl(method="repeatedcv", 
@@ -449,10 +455,49 @@ server <- function(input, output, session) ({
     output$model_sel_tbl <- renderTable({ 
         model_sel_tb()
     })
-
+    
+    output$ale_plot <- renderPlot({
+        data_trainer <- model_df()
+        
+        explainer <- DALEX::explain(model = model_gen(),  
+                                    data = data_trainer[, -11],
+                                    y = data_trainer$Class, 
+                                    type='classification',
+                                    label='RF Model')
+        
+        ale_rf <- model_profile(explainer = explainer, 
+                                type='accumulated',
+                                variables = names(data_trainer)[-11])
+        plot(ale_rf)
+        })
+    
+    output$feat_imp_res <- renderPlot({
+        data_trainer <- model_df()
+        explainer <- DALEX::explain(model = model_gen(),  
+                                    data = data_trainer[, -11],
+                                    y = data_trainer$Class, 
+                                    type='classification',
+                                    label='RF Model')
+        explainer %>% model_parts() %>% 
+            plot(show_boxplots = FALSE) + 
+            ggtitle("Feature Importance ", "")
+    })
     
     
-   
+    output$breakdown_profile <- renderPlot({
+        data_trainer <- model_df()
+        explainer <- DALEX::explain(model = model_gen(),  
+                                    data = data_trainer[, -11],
+                                    y = data_trainer$Class, 
+                                    type='classification',
+                                    label='RF Model')
+        explainer %>% 
+            predict_parts(new_observation = data_trainer) %>% 
+            plot()
+    })
+    
+    
+    
     
 })
 
